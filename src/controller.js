@@ -69,11 +69,6 @@ function dispatchKey(key) {
   target.dispatchEvent(new KeyboardEvent('keydown', { key, code:key, bubbles:true, cancelable:true }));
 }
 
-function sendPlayerKey(key) {
-  if (window.electronAPI?.sendControllerKey) window.electronAPI.sendControllerKey(key).catch?.(() => {});
-  else dispatchKey(key);
-}
-
 function movePlayerMouse(axisX, axisY) {
   const magnitude = Math.hypot(axisX, axisY);
   if (magnitude < 0.01) return;
@@ -89,7 +84,9 @@ function clickPlayerMouse() { window.electronAPI?.clickControllerMouse?.()?.catc
 
 function action(index) {
   emitControllerActivity({ button:index, key:KEY_BY_BUTTON[index] || null });
-  setControllerCursorHidden(true);
+  // Normal app navigation is controller-first. The player deliberately keeps
+  // the real cursor visible because the left stick controls the player cursor.
+  if (!isPlayer()) setControllerCursorHidden(true);
 
   if (isPlayer()) {
     if (index === BUTTONS.A) return clickPlayerMouse();
@@ -131,7 +128,6 @@ function poll() {
     activePad = { index:pad.index, id:pad.id };
     previous = [];
     lastAction.clear();
-    setControllerCursorHidden(true);
     setStatus(`🎮 Controller connected · ${pad.id || 'Gamepad'}`);
     emitControllerActivity({ connected:true });
   }
@@ -144,8 +140,11 @@ function poll() {
   }
 
   const now = performance.now();
+  let touched = false;
+
   for (let i = 0; i < pad.buttons.length; i++) {
     const down = pressed(pad, i), wasDown = !!previous[i];
+    if (down) touched = true;
     if (down && (!wasDown || [12,13,14,15].includes(i)) && shouldRepeat(i, now)) action(i);
     previous[i] = down;
   }
@@ -154,6 +153,13 @@ function poll() {
   const rawY = pad.axes?.[1] || 0;
   const x = Math.abs(rawX) > AXIS_DEADZONE ? Math.sign(rawX) * ((Math.abs(rawX) - AXIS_DEADZONE) / (1 - AXIS_DEADZONE)) : 0;
   const y = Math.abs(rawY) > AXIS_DEADZONE ? Math.sign(rawY) * ((Math.abs(rawY) - AXIS_DEADZONE) / (1 - AXIS_DEADZONE)) : 0;
+  if (x !== 0 || y !== 0) touched = true;
+
+  // Do not hide the cursor merely because a controller is connected. The first
+  // real button/axis input is what switches the normal app into controller mode.
+  // The player is excluded because its left stick intentionally controls the
+  // visible Windows cursor.
+  if (touched && !isPlayer()) setControllerCursorHidden(true);
 
   if (isPlayer()) {
     movePlayerMouse(x, y);
@@ -169,7 +175,6 @@ function poll() {
 window.addEventListener('gamepadconnected', event => {
   activePad = { index:event.gamepad.index, id:event.gamepad.id };
   previous = [];
-  setControllerCursorHidden(true);
   setStatus(`🎮 Controller detected · ${event.gamepad.id || 'Gamepad'}`);
   emitControllerActivity({ connected:true });
 });
@@ -183,7 +188,8 @@ window.addEventListener('gamepaddisconnected', event => {
   }
 });
 
-// Any real mouse movement returns the pointer to normal desktop behavior.
+// Real mouse movement returns the pointer to normal desktop behavior on the
+// regular app. The player intentionally keeps the pointer visible.
 window.addEventListener('mousemove', () => {
   if (controllerMode && !isPlayer()) setControllerCursorHidden(false);
 }, { passive:true });
