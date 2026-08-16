@@ -15,17 +15,7 @@ The repository includes ready-to-use `.bat` tools so you do not need to remember
 
 ### 1. Install dependencies
 
-Double-click:
-
-```text
-setup.bat
-```
-
-Or run:
-
-```bat
-setup.bat
-```
+Double-click `setup.bat`.
 
 ### 2. Configure TMDB
 
@@ -37,70 +27,44 @@ VITE_TMDB_API_KEY=your_key
 
 ### 3. Run the Electron app in development
 
-Double-click:
-
-```text
-run-dev.bat
-```
-
-This starts Vite and Electron together.
+Double-click `run-dev.bat`.
 
 ### 4. Build the production frontend
 
-Double-click:
+Double-click `build.bat`. This creates the Vite frontend in `dist/`.
 
-```text
-build.bat
-```
+### 5. Build the Windows EXE
 
-This runs the Vite production build and creates `dist/`.
-
-### 5. Create the Windows Electron application
-
-Double-click:
+For the complete Windows package, double-click either:
 
 ```text
 package-windows.bat
 ```
 
-This runs the production build and Electron Builder. The Windows installer and portable executable are created in:
+or the dedicated:
+
+```text
+build-exe.bat
+```
+
+Both commands first build the production frontend and then run Electron Builder for Windows x64. The generated installer and portable executable are placed in:
 
 ```text
 dist-electron/
 ```
+
+The portable build can run without Node.js, npm, Vite, or the source project being installed on the target machine.
 
 ### 6. Launch the packaged application
 
-After packaging, double-click:
-
-```text
-launch-packaged.bat
-```
-
-The script automatically finds the generated portable `.exe` and launches it.
+Double-click `launch-packaged.bat`. It automatically finds the generated portable `.exe` in `dist-electron/`.
 
 ### 7. Clean generated files
 
-To remove build/dependency output and start fresh, double-click:
-
-```text
-clean.bat
-```
-
-This removes:
-
-```text
-node_modules/
-dist/
-dist-electron/
-```
-
-Run `setup.bat` again afterward to reinstall dependencies.
+Double-click `clean.bat` to remove `node_modules/`, `dist/`, and `dist-electron/`. Run `setup.bat` afterward to reinstall dependencies.
 
 ## Command-line equivalents
 
-The BAT files are wrappers around these commands:
-
 ```bash
 npm install
 npm run dev
@@ -108,26 +72,17 @@ npm run build
 npm run package
 ```
 
-## Development
+## Windows tools
 
-```bash
-npm install
-npm run dev
-```
-
-## Production frontend
-
-```bash
-npm run build
-```
-
-## Windows package
-
-```bash
-npm run package
-```
-
-The Windows installer/portable executable is emitted under `dist-electron/`.
+| Tool | Purpose |
+|---|---|
+| `setup.bat` | Install dependencies |
+| `run-dev.bat` | Start Vite + Electron development mode |
+| `build.bat` | Build the production frontend into `dist/` |
+| `package-windows.bat` | Build and package Windows x64 installer + portable EXE |
+| `build-exe.bat` | Dedicated one-click production EXE/installer build |
+| `launch-packaged.bat` | Launch the generated portable `.exe` |
+| `clean.bat` | Remove generated dependencies and build output |
 
 ## Architecture
 
@@ -137,23 +92,12 @@ The Windows installer/portable executable is emitted under `dist-electron/`.
 - `contextIsolation: true`
 - `sandbox: true`
 - Controlled navigation and external-window handling
-- LocalStorage for My List and watch-progress state
+- LocalStorage for My List/watch-progress state
+
+## Controller
+
+The interface uses native buttons and clear focus treatment for controller/TV navigation. Controller input can be used across the application, with special mouse-style control inside the fullscreen player.
 
 ## Notes
 
 TMDB is used for metadata/discovery. VidKing is used as the configured playback provider. Availability and embed behavior are controlled by those external services.
-
-## Controller
-
-The interface uses native buttons and a clear focus treatment so keyboard/TV remote navigation can be used without a mouse. Arrow/Enter/Escape behavior follows standard browser focus navigation.
-
-## Windows tools
-
-| Tool | Purpose |
-|---|---|
-| `setup.bat` | Install and verify Node.js/npm dependencies |
-| `run-dev.bat` | Start Vite + Electron development mode |
-| `build.bat` | Build the production frontend |
-| `package-windows.bat` | Build and package the Windows Electron application |
-| `launch-packaged.bat` | Launch the generated portable `.exe` |
-| `clean.bat` | Remove generated dependencies and build output |
