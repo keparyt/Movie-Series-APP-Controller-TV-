@@ -12,9 +12,9 @@ let activePad = null, previous = [], lastAction = new Map(), lastAxis = { x: 0, 
 let controllerMode = false;
 
 const BUTTON_REPEAT_MS = 280;
-const AXIS_DEADZONE = 0.24;
-const MOUSE_SPEED = 3.2;
-const MOUSE_MAX_STEP = 5;
+const AXIS_DEADZONE = 0.18;
+const MOUSE_MAX_STEP = 9.5;
+const MOUSE_ACCELERATION = 2.15;
 
 function isPlayer() { return !!document.querySelector('.playerPage'); }
 function isSearchField() { return !!document.activeElement?.matches?.('.search input'); }
@@ -69,12 +69,14 @@ function dispatchKey(key) {
   target.dispatchEvent(new KeyboardEvent('keydown', { key, code:key, bubbles:true, cancelable:true }));
 }
 
+// Accelerated player cursor: small stick movement stays precise while larger
+// movement ramps up quickly and reaches a higher capped speed.
 function movePlayerMouse(axisX, axisY) {
   const magnitude = Math.hypot(axisX, axisY);
-  if (magnitude < 0.01) return;
+  if (magnitude < 0.001) return;
   const normalized = Math.min(1, magnitude);
-  const curved = Math.pow(normalized, 1.7);
-  const step = Math.min(MOUSE_MAX_STEP, MOUSE_SPEED * curved);
+  const curved = Math.pow(normalized, MOUSE_ACCELERATION);
+  const step = Math.min(MOUSE_MAX_STEP, 0.65 + (MOUSE_MAX_STEP - 0.65) * curved);
   const x = (axisX / magnitude) * step;
   const y = (axisY / magnitude) * step;
   window.electronAPI?.moveControllerMouse?.(x, y)?.catch?.(() => {});
@@ -84,8 +86,6 @@ function clickPlayerMouse() { window.electronAPI?.clickControllerMouse?.()?.catc
 
 function action(index) {
   emitControllerActivity({ button:index, key:KEY_BY_BUTTON[index] || null });
-  // Normal app navigation is controller-first. The player deliberately keeps
-  // the real cursor visible because the left stick controls the player cursor.
   if (!isPlayer()) setControllerCursorHidden(true);
 
   if (isPlayer()) {
@@ -155,10 +155,6 @@ function poll() {
   const y = Math.abs(rawY) > AXIS_DEADZONE ? Math.sign(rawY) * ((Math.abs(rawY) - AXIS_DEADZONE) / (1 - AXIS_DEADZONE)) : 0;
   if (x !== 0 || y !== 0) touched = true;
 
-  // Do not hide the cursor merely because a controller is connected. The first
-  // real button/axis input is what switches the normal app into controller mode.
-  // The player is excluded because its left stick intentionally controls the
-  // visible Windows cursor.
   if (touched && !isPlayer()) setControllerCursorHidden(true);
 
   if (isPlayer()) {
@@ -188,8 +184,6 @@ window.addEventListener('gamepaddisconnected', event => {
   }
 });
 
-// Real mouse movement returns the pointer to normal desktop behavior on the
-// regular app. The player intentionally keeps the pointer visible.
 window.addEventListener('mousemove', () => {
   if (controllerMode && !isPlayer()) setControllerCursorHidden(false);
 }, { passive:true });
