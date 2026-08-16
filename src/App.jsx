@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { details, imageUrl, popularMovies, popularTv, searchMulti, trending } from './services/tmdb.js';
-import { addHistory, clearHistory, loadStore, saveStore, setProgress, toggleMyList } from './storage/store.js';
+import { addHistory, clearHistory, loadStore, setProgress, toggleMyList } from './storage/store.js';
 
 const typeName = x => x.media_type === 'tv' || x.first_air_date ? 'tv' : 'movie';
 
@@ -58,15 +58,20 @@ function App() {
     catch (e) { setError(e.message); } finally { setLoading(false); }
   }
 
-  function openPlayer(item) {
+  async function openPlayer(item) {
     const type = item.title ? 'movie' : 'tv';
     const url = type === 'movie'
       ? `https://www.vidking.net/embed/movie/${item.id}?autoplay=true&color=d6ad54`
       : `https://www.vidking.net/embed/tv/${item.id}/1/1?autoplay=true&color=d6ad54`;
     const updated = addHistory(item, 'play');
     setStore(updated);
+    setPage('player');
     setPlayer({ item, type, url });
     setSelected(null);
+
+    // Play Now is a direct user action: put the Electron window into fullscreen immediately.
+    // The player page then fills that fullscreen window and focuses the iframe for controller input.
+    try { await window.electronAPI?.enterFullscreen?.(); } catch {}
   }
 
   const hero = useMemo(() => items[0], [items]);
@@ -83,7 +88,7 @@ function App() {
 
     <main>
       {error && <div className="error">{error}</div>}
-      {player ? <PlayerView player={player} store={store} setStore={setStore} onClose={() => setPlayer(null)} /> : selected ? <DetailsView item={selected} store={store} setStore={setStore} onBack={() => setSelected(null)} onPlay={() => openPlayer(selected)} /> : <>
+      {player ? <PlayerView player={player} store={store} setStore={setStore} onClose={() => { setPlayer(null); setPage('home'); }} /> : selected ? <DetailsView item={selected} store={store} setStore={setStore} onBack={() => setSelected(null)} onPlay={() => openPlayer(selected)} /> : <>
         {hero && page === 'home' && <section className="hero" style={{backgroundImage:`linear-gradient(90deg,#07080b 8%,rgba(7,8,11,.82) 42%,rgba(7,8,11,.15) 100%),url(${imageUrl(hero.backdrop_path,'original')})`}}><div><p className="eyebrow">✦ TRENDING THIS WEEK</p><h1>{hero.title || hero.name}</h1><p>{hero.overview}</p><div className="heroActions"><button className="primary" onClick={()=>select(hero)}>View Details</button><button className="ghost" onClick={()=>openPlayer(hero)}>▶ Play Now</button></div></div></section>}
         <section className="content"><div className="sectionTitle"><div><p className="eyebrow">{page === 'history' ? 'YOUR ACTIVITY' : 'DISCOVER'}</p><h2>{page === 'mylist' ? 'My List' : page === 'history' ? 'Recently Viewed' : page === 'search' ? `Results for “${query}”` : page === 'movies' ? 'Popular Movies' : page === 'tv' ? 'Popular Series' : 'Trending Now'}</h2></div><span>{items.length} titles</span>{page === 'history' && items.length > 0 && <button className="clearBtn" onClick={() => { const next=clearHistory(); setStore(next); setItems([]); }}>Clear History</button>}</div>
           {loading ? <div className="loading"><i /> Loading your library…</div> : listed.length ? <div className="grid">{listed.map(item => <Card key={`${item.key || item.media_type || typeName(item)}-${item.id}`} item={item} onSelect={select}/>)}</div> : <div className="empty"><strong>{page === 'history' ? 'Your history is empty' : 'Nothing to show here.'}</strong><span>{page === 'history' ? 'Movies and series you open will appear here.' : 'Try another section or search for something new.'}</span></div>}
@@ -105,18 +110,50 @@ function PlayerView({ player, store, setStore, onClose }) {
   const [playing, setPlaying] = useState(false);
   const startedAt = useRef(Date.now());
   const frameRef = useRef(null);
+  const playerPageRef = useRef(null);
+
   useEffect(() => {
+    // Keep the player screen fullscreen even if the app was restored from another window state.
+    window.electronAPI?.enterFullscreen?.().catch?.(() => {});
+    const focusTimer = setTimeout(() => frameRef.current?.focus(), 100);
     const timer = setInterval(() => {
       const elapsed = (Date.now() - startedAt.current) / 1000;
       if (elapsed > 2) setStore(setProgress(player.item, elapsed));
     }, 10000);
-    return () => clearInterval(timer);
+    return () => { clearTimeout(focusTimer); clearInterval(timer); };
   }, [player.item, setStore]);
-  useEffect(() => { setPlaying(true); frameRef.current?.focus(); }, []);
-  return <section className="playerPage" tabIndex="-1">
-    <div className="playerTop"><button className="back" onClick={onClose}>← Back</button><div><span className="liveDot" /> Playing <strong>{player.item.title || player.item.name}</strong></div><button className="playerHint" onClick={()=>frameRef.current?.focus()}>🎮 Focus Player</button></div>
-    <div className="playerFrameWrap"><iframe ref={frameRef} title="VidKing Player" src={player.url} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen onLoad={()=>setPlaying(true)} /></div>
-    <div className="playerMeta"><div><p className="eyebrow">NOW PLAYING</p><h2>{player.item.title || player.item.name}</h2><p>Playback stays inside the application. Use the controller/keyboard to move focus and the player controls.</p></div><span className={playing ? 'status ok' : 'status'}>{playing ? '● Player loaded' : 'Loading player…'}</span></div>
+
+  function handleControllerKey(e) {
+    // These keys are intentionally left available to the focused VidKing iframe.
+    // Escape is handled by the app so a controller B/Escape can leave the player.
+    if (e.key === 'Escape' || e.key === 'BrowserBack') {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' '].includes(e.key)) {
+      frameRef.current?.focus();
+    }
+  }
+
+  return <section className="playerPage" ref={playerPageRef} tabIndex="-1" onKeyDown={handleControllerKey}>
+    <div className="playerTop">
+      <button className="back" onClick={onClose}>← Back</button>
+      <div><span className="liveDot" /> Playing <strong>{player.item.title || player.item.name}</strong></div>
+      <button className="playerHint" onClick={() => frameRef.current?.focus()}>🎮 Focus Player</button>
+    </div>
+    <div className="playerFrameWrap playerFullscreenStage">
+      <iframe
+        ref={frameRef}
+        title="VidKing Player"
+        src={player.url}
+        allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+        allowFullScreen
+        tabIndex="0"
+        onLoad={() => { setPlaying(true); frameRef.current?.focus(); }}
+      />
+    </div>
+    <div className="playerMeta"><div><p className="eyebrow">NOW PLAYING</p><h2>{player.item.title || player.item.name}</h2><p>Controller focus is sent to the player. Arrow/D-pad, A/Enter and player-supported media controls remain available.</p></div><span className={playing ? 'status ok' : 'status'}>{playing ? '● Player loaded' : 'Loading player…'}</span></div>
   </section>;
 }
 
