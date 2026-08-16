@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
@@ -11,8 +11,8 @@ function allowedNavigation(url) {
     const parsed = new URL(url);
     if (parsed.protocol === 'file:') return true;
     if (isDev && parsed.hostname === '127.0.0.1' && parsed.port === '5173') return true;
-    if (parsed.hostname.endsWith('vidking.net')) return true;
-    if (parsed.hostname.endsWith('tmdb.org')) return true;
+    if (parsed.hostname === 'vidking.net' || parsed.hostname.endsWith('.vidking.net')) return true;
+    if (parsed.hostname === 'tmdb.org' || parsed.hostname.endsWith('.tmdb.org')) return true;
     return false;
   } catch {
     return false;
@@ -91,14 +91,23 @@ function createWindow() {
     }
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://www.vidking.net/')) return { action: 'allow' };
-    shell.openExternal(url).catch(() => {});
-    return { action: 'deny' };
+  // NEVER hand links from the renderer/player to the operating system browser.
+  // This is intentionally deny-all: the media player must remain inside Electron.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // Keep top-level navigation inside the application only.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!allowedNavigation(url)) {
+      event.preventDefault();
+    }
   });
 
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!allowedNavigation(url)) event.preventDefault();
+  // Also prevent attempts to create/navigate a separate frame to an arbitrary
+  // external page. VidKing's own allowed frames are left untouched.
+  mainWindow.webContents.on('will-frame-navigate', (event, url, isMainFrame) => {
+    if (isMainFrame && !allowedNavigation(url)) {
+      event.preventDefault();
+    }
   });
 
   if (isDev) mainWindow.loadURL('http://127.0.0.1:5173');
@@ -154,19 +163,19 @@ ipcMain.handle('controller-mouse-move', (_event, payload) => {
     };
   }
 
-  const screen = require('electron').screen;
-  const display = screen.getDisplayNearestPoint({ x: mainWindow.__controllerMouse.x, y: mainWindow.__controllerMouse.y });
+  const display = screen.getDisplayNearestPoint({
+    x: mainWindow.__controllerMouse.x,
+    y: mainWindow.__controllerMouse.y
+  });
   const work = display.bounds;
   mainWindow.__controllerMouse.x = Math.max(work.x, Math.min(work.x + work.width - 1, mainWindow.__controllerMouse.x + dx));
   mainWindow.__controllerMouse.y = Math.max(work.y, Math.min(work.y + work.height - 1, mainWindow.__controllerMouse.y + dy));
 
-  // Move the REAL Windows cursor, not just Chromium's internal mouse position.
   return writeCursorCommand(`M ${Math.round(mainWindow.__controllerMouse.x)} ${Math.round(mainWindow.__controllerMouse.y)}`);
 });
 
 ipcMain.handle('controller-mouse-click', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
-  // The real Windows cursor is now over the player, so perform a real OS left click.
   return writeCursorCommand('C');
 });
 
