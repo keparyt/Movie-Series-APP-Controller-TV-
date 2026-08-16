@@ -9,7 +9,13 @@ const KEY_BY_BUTTON = {
 };
 
 let activePad = null, previous = [], lastAction = new Map(), lastAxis = { x: 0, y: 0 }, statusEl;
-let virtualMouseSpeed = 14;
+
+// Deliberately conservative values for a TV/10-foot UI. Controller input should
+// feel deliberate rather than behaving like a mouse held at full speed.
+const BUTTON_REPEAT_MS = 280;
+const AXIS_DEADZONE = 0.24;
+const MOUSE_SPEED = 3.2;
+const MOUSE_MAX_STEP = 5;
 
 function isPlayer() { return !!document.querySelector('.playerPage'); }
 function isSearchField() { return !!document.activeElement?.matches?.('.search input'); }
@@ -64,12 +70,17 @@ function sendPlayerKey(key) {
   else dispatchKey(key);
 }
 
-function movePlayerMouse(dx, dy) {
-  const magnitude = Math.max(Math.abs(dx), Math.abs(dy));
+function movePlayerMouse(axisX, axisY) {
+  const magnitude = Math.hypot(axisX, axisY);
   if (magnitude < 0.01) return;
-  const curved = Math.min(28, virtualMouseSpeed * Math.max(0.35, magnitude));
-  const x = Math.sign(dx) * curved;
-  const y = Math.sign(dy) * curved;
+
+  // Preserve analog precision: small stick movements are slow, full stick is
+  // still useful, but never produces huge jumps between animation frames.
+  const normalized = Math.min(1, magnitude);
+  const curved = Math.pow(normalized, 1.7);
+  const step = Math.min(MOUSE_MAX_STEP, MOUSE_SPEED * curved);
+  const x = (axisX / magnitude) * step;
+  const y = (axisY / magnitude) * step;
   window.electronAPI?.moveControllerMouse?.(x, y)?.catch?.(() => {});
 }
 
@@ -80,8 +91,6 @@ function clickPlayerMouse() {
 function action(index) {
   emitControllerActivity({ button:index, key:KEY_BY_BUTTON[index] || null });
 
-  // Player mode intentionally behaves like a TV remote controlling the actual
-  // pointer. A = left click and B = back. The sticks are handled separately.
   if (isPlayer()) {
     if (index === BUTTONS.A) return clickPlayerMouse();
     if (index === BUTTONS.B) return dispatchKey('Escape');
@@ -92,7 +101,6 @@ function action(index) {
   const key = KEY_BY_BUTTON[index];
   if (!key) return;
 
-  // The search field must be explicitly activated with A. Focus/hover alone never opens the keyboard.
   if (index === BUTTONS.A && isSearchField()) {
     window.dispatchEvent(new CustomEvent('controllersearchactivate'));
     return;
@@ -110,7 +118,12 @@ function action(index) {
 }
 
 function pressed(pad, index) { const b = pad.buttons[index]; return !!b && (b.pressed || b.value > 0.5); }
-function shouldRepeat(index, now) { const last = lastAction.get(index) || 0; if (now - last < 170) return false; lastAction.set(index, now); return true; }
+function shouldRepeat(index, now) {
+  const last = lastAction.get(index) || 0;
+  if (now - last < BUTTON_REPEAT_MS) return false;
+  lastAction.set(index, now);
+  return true;
+}
 
 function poll() {
   const pads = navigator.getGamepads ? [...navigator.getGamepads()] : [];
@@ -135,19 +148,18 @@ function poll() {
 
   const rawX = pad.axes?.[0] || 0;
   const rawY = pad.axes?.[1] || 0;
-  const deadzone = 0.18;
-  const x = Math.abs(rawX) > deadzone ? Math.sign(rawX) * ((Math.abs(rawX) - deadzone) / (1 - deadzone)) : 0;
-  const y = Math.abs(rawY) > deadzone ? Math.sign(rawY) * ((Math.abs(rawY) - deadzone) / (1 - deadzone)) : 0;
+  const x = Math.abs(rawX) > AXIS_DEADZONE ? Math.sign(rawX) * ((Math.abs(rawX) - AXIS_DEADZONE) / (1 - AXIS_DEADZONE)) : 0;
+  const y = Math.abs(rawY) > AXIS_DEADZONE ? Math.sign(rawY) * ((Math.abs(rawY) - AXIS_DEADZONE) / (1 - AXIS_DEADZONE)) : 0;
 
   if (isPlayer()) {
-    // While the player exists, the left stick becomes a real mouse/pointer.
-    // This is deliberately continuous instead of directional focus navigation.
-    if (x || y) movePlayerMouse(x, y);
+    movePlayerMouse(x, y);
   } else {
-    if (x !== lastAxis.x) { if (x < 0) action(BUTTONS.LEFT); if (x > 0) action(BUTTONS.RIGHT); }
-    if (y !== lastAxis.y) { if (y < 0) action(BUTTONS.UP); if (y > 0) action(BUTTONS.DOWN); }
+    // Only trigger directional focus when the stick crosses from neutral into
+    // a direction. Holding it repeats at the same controlled interval as D-pad.
+    if (x !== 0 && lastAxis.x === 0) action(x < 0 ? BUTTONS.LEFT : BUTTONS.RIGHT);
+    if (y !== 0 && lastAxis.y === 0) action(y < 0 ? BUTTONS.UP : BUTTONS.DOWN);
   }
-  lastAxis = { x, y };
+  lastAxis = { x: x === 0 ? 0 : Math.sign(x), y: y === 0 ? 0 : Math.sign(y) };
 
   requestAnimationFrame(poll);
 }
