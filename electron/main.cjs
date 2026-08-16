@@ -1,8 +1,10 @@
 const { app, BrowserWindow, session, shell, ipcMain } = require('electron');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 
 const isDev = !app.isPackaged;
 let mainWindow;
+let cursorWorker = null;
 
 function allowedNavigation(url) {
   try {
@@ -12,6 +14,59 @@ function allowedNavigation(url) {
     if (parsed.hostname.endsWith('vidking.net')) return true;
     if (parsed.hostname.endsWith('tmdb.org')) return true;
     return false;
+  } catch {
+    return false;
+  }
+}
+
+function startCursorWorker() {
+  if (process.platform !== 'win32' || cursorWorker) return;
+
+  const script = `
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class NativeMouse {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+}
+'@
+while (($line = [Console]::In.ReadLine()) -ne $null) {
+  try {
+    $parts = $line.Trim().Split(' ')
+    if ($parts[0] -eq 'M' -and $parts.Count -ge 3) {
+      [NativeMouse]::SetCursorPos([int]$parts[1], [int]$parts[2]) | Out-Null
+    } elseif ($parts[0] -eq 'C') {
+      [NativeMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+      [NativeMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    }
+  } catch {}
+}
+`;
+
+  cursorWorker = spawn('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script
+  ], { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+
+  cursorWorker.on('exit', () => { cursorWorker = null; });
+  cursorWorker.on('error', () => { cursorWorker = null; });
+}
+
+function stopCursorWorker() {
+  if (cursorWorker) {
+    try { cursorWorker.stdin.end(); } catch {}
+    try { cursorWorker.kill(); } catch {}
+    cursorWorker = null;
+  }
+}
+
+function writeCursorCommand(command) {
+  if (process.platform !== 'win32') return false;
+  startCursorWorker();
+  if (!cursorWorker?.stdin?.writable) return false;
+  try {
+    cursorWorker.stdin.write(`${command}\n`);
+    return true;
   } catch {
     return false;
   }
@@ -94,45 +149,37 @@ ipcMain.handle('controller-mouse-move', (_event, payload) => {
 
   if (!mainWindow.__controllerMouse) {
     mainWindow.__controllerMouse = {
-      x: Math.round(bounds.width / 2),
-      y: Math.round(bounds.height / 2)
+      x: Math.round(bounds.x + bounds.width / 2),
+      y: Math.round(bounds.y + bounds.height / 2)
     };
   }
 
-  mainWindow.__controllerMouse.x = Math.max(0, Math.min(bounds.width - 1, mainWindow.__controllerMouse.x + dx));
-  mainWindow.__controllerMouse.y = Math.max(0, Math.min(bounds.height - 1, mainWindow.__controllerMouse.y + dy));
+  const screen = require('electron').screen;
+  const display = screen.getDisplayNearestPoint({ x: mainWindow.__controllerMouse.x, y: mainWindow.__controllerMouse.y });
+  const work = display.bounds;
+  mainWindow.__controllerMouse.x = Math.max(work.x, Math.min(work.x + work.width - 1, mainWindow.__controllerMouse.x + dx));
+  mainWindow.__controllerMouse.y = Math.max(work.y, Math.min(work.y + work.height - 1, mainWindow.__controllerMouse.y + dy));
 
-  try {
-    mainWindow.webContents.sendInputEvent({
-      type: 'mouseMove',
-      x: Math.round(mainWindow.__controllerMouse.x),
-      y: Math.round(mainWindow.__controllerMouse.y)
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  // Move the REAL Windows cursor, not just Chromium's internal mouse position.
+  return writeCursorCommand(`M ${Math.round(mainWindow.__controllerMouse.x)} ${Math.round(mainWindow.__controllerMouse.y)}`);
 });
 
 ipcMain.handle('controller-mouse-click', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
-  try {
-    mainWindow.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1 });
-    mainWindow.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1 });
-    return true;
-  } catch {
-    return false;
-  }
+  // The real Windows cursor is now over the player, so perform a real OS left click.
+  return writeCursorCommand('C');
 });
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => callback({ requestHeaders: details.requestHeaders }));
   createWindow();
+  startCursorWorker();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else mainWindow.setFullScreen(true);
   });
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', stopCursorWorker);
+app.on('window-all-closed', () => { stopCursorWorker(); if (process.platform !== 'darwin') app.quit(); });
