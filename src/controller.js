@@ -9,9 +9,8 @@ const KEY_BY_BUTTON = {
 };
 
 let activePad = null, previous = [], lastAction = new Map(), lastAxis = { x: 0, y: 0 }, statusEl;
+let controllerMode = false;
 
-// Deliberately conservative values for a TV/10-foot UI. Controller input should
-// feel deliberate rather than behaving like a mouse held at full speed.
 const BUTTON_REPEAT_MS = 280;
 const AXIS_DEADZONE = 0.24;
 const MOUSE_SPEED = 3.2;
@@ -19,6 +18,15 @@ const MOUSE_MAX_STEP = 5;
 
 function isPlayer() { return !!document.querySelector('.playerPage'); }
 function isSearchField() { return !!document.activeElement?.matches?.('.search input'); }
+
+function setControllerCursorHidden(hidden) {
+  controllerMode = hidden;
+  document.documentElement.classList.toggle('controller-active', hidden);
+}
+
+function emitControllerActivity(detail = {}) {
+  window.dispatchEvent(new CustomEvent('controlleractivity', { detail: { controllerId: activePad?.id || 'Gamepad', ...detail } }));
+}
 
 function setStatus(text, ok = true) {
   if (!statusEl) {
@@ -32,10 +40,6 @@ function setStatus(text, ok = true) {
   statusEl.style.opacity = '1';
   clearTimeout(setStatus.timer);
   setStatus.timer = setTimeout(() => { if (statusEl) statusEl.style.opacity = '.45'; }, 1800);
-}
-
-function emitControllerActivity(detail = {}) {
-  window.dispatchEvent(new CustomEvent('controlleractivity', { detail: { controllerId: activePad?.id || 'Gamepad', ...detail } }));
 }
 
 function focusable() {
@@ -73,9 +77,6 @@ function sendPlayerKey(key) {
 function movePlayerMouse(axisX, axisY) {
   const magnitude = Math.hypot(axisX, axisY);
   if (magnitude < 0.01) return;
-
-  // Preserve analog precision: small stick movements are slow, full stick is
-  // still useful, but never produces huge jumps between animation frames.
   const normalized = Math.min(1, magnitude);
   const curved = Math.pow(normalized, 1.7);
   const step = Math.min(MOUSE_MAX_STEP, MOUSE_SPEED * curved);
@@ -84,12 +85,11 @@ function movePlayerMouse(axisX, axisY) {
   window.electronAPI?.moveControllerMouse?.(x, y)?.catch?.(() => {});
 }
 
-function clickPlayerMouse() {
-  window.electronAPI?.clickControllerMouse?.()?.catch?.(() => {});
-}
+function clickPlayerMouse() { window.electronAPI?.clickControllerMouse?.()?.catch?.(() => {}); }
 
 function action(index) {
   emitControllerActivity({ button:index, key:KEY_BY_BUTTON[index] || null });
+  setControllerCursorHidden(true);
 
   if (isPlayer()) {
     if (index === BUTTONS.A) return clickPlayerMouse();
@@ -100,12 +100,10 @@ function action(index) {
 
   const key = KEY_BY_BUTTON[index];
   if (!key) return;
-
   if (index === BUTTONS.A && isSearchField()) {
     window.dispatchEvent(new CustomEvent('controllersearchactivate'));
     return;
   }
-
   if (index === BUTTONS.B || index === BUTTONS.SELECT) { dispatchKey('Escape'); return; }
   if (index === BUTTONS.UP) return moveFocus('up');
   if (index === BUTTONS.DOWN) return moveFocus('down');
@@ -133,11 +131,17 @@ function poll() {
     activePad = { index:pad.index, id:pad.id };
     previous = [];
     lastAction.clear();
+    setControllerCursorHidden(true);
     setStatus(`🎮 Controller connected · ${pad.id || 'Gamepad'}`);
     emitControllerActivity({ connected:true });
   }
 
-  if (!pad) { activePad = null; requestAnimationFrame(poll); return; }
+  if (!pad) {
+    if (activePad) setControllerCursorHidden(false);
+    activePad = null;
+    requestAnimationFrame(poll);
+    return;
+  }
 
   const now = performance.now();
   for (let i = 0; i < pad.buttons.length; i++) {
@@ -154,8 +158,6 @@ function poll() {
   if (isPlayer()) {
     movePlayerMouse(x, y);
   } else {
-    // Only trigger directional focus when the stick crosses from neutral into
-    // a direction. Holding it repeats at the same controlled interval as D-pad.
     if (x !== 0 && lastAxis.x === 0) action(x < 0 ? BUTTONS.LEFT : BUTTONS.RIGHT);
     if (y !== 0 && lastAxis.y === 0) action(y < 0 ? BUTTONS.UP : BUTTONS.DOWN);
   }
@@ -167,6 +169,7 @@ function poll() {
 window.addEventListener('gamepadconnected', event => {
   activePad = { index:event.gamepad.index, id:event.gamepad.id };
   previous = [];
+  setControllerCursorHidden(true);
   setStatus(`🎮 Controller detected · ${event.gamepad.id || 'Gamepad'}`);
   emitControllerActivity({ connected:true });
 });
@@ -174,10 +177,16 @@ window.addEventListener('gamepadconnected', event => {
 window.addEventListener('gamepaddisconnected', event => {
   if (!activePad || activePad.index === event.gamepad.index) {
     activePad = null;
+    setControllerCursorHidden(false);
     setStatus('🎮 Controller disconnected', false);
     window.dispatchEvent(new CustomEvent('controllerdisconnected'));
   }
 });
+
+// Any real mouse movement returns the pointer to normal desktop behavior.
+window.addEventListener('mousemove', () => {
+  if (controllerMode && !isPlayer()) setControllerCursorHidden(false);
+}, { passive:true });
 
 window.addEventListener('keydown', event => {
   if (event.key === 'Tab') return;
