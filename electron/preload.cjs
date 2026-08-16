@@ -5,5 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', Object.freeze({
   platform: process.platform,
   enterFullscreen: () => ipcRenderer.invoke('enter-fullscreen'),
   exitFullscreen: () => ipcRenderer.invoke('exit-fullscreen'),
-  sendControllerKey: (key) => ipcRenderer.invoke('controller-key', key)
+  sendControllerKey: (key) => ipcRenderer.invoke('controller-key', key),
+  moveControllerMouse: (dx, dy) => ipcRenderer.invoke('controller-mouse-move', { dx, dy }),
+  clickControllerMouse: () => ipcRenderer.invoke('controller-mouse-click')
 }));
