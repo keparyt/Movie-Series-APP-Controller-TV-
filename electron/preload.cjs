@@ -1,6 +1,8 @@
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', Object.freeze({
   isElectron: true,
-  platform: process.platform
+  platform: process.platform,
+  enterFullscreen: () => ipcRenderer.invoke('enter-fullscreen'),
+  exitFullscreen: () => ipcRenderer.invoke('exit-fullscreen')
 }));
