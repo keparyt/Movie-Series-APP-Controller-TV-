@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, shell } = require('electron');
+const { app, BrowserWindow, session, shell, ipcMain } = require('electron');
 const path = require('node:path');
 
 const isDev = !app.isPackaged;
@@ -54,6 +54,17 @@ function createWindow() {
     mainWindow.focus();
   });
 }
+
+ipcMain.handle('enter-fullscreen', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setFullScreen(true);
+    mainWindow.focus();
+  }
+});
+
+ipcMain.handle('exit-fullscreen', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setFullScreen(false);
+});
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
