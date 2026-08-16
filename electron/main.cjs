@@ -66,6 +66,26 @@ ipcMain.handle('exit-fullscreen', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setFullScreen(false);
 });
 
+ipcMain.handle('controller-key', (_event, key) => {
+  const allowedKeys = new Set([
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+    'Enter', 'Space', 'Escape', 'KeyF', 'KeyM', 'PageUp', 'PageDown'
+  ]);
+  if (!allowedKeys.has(key)) return false;
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+  // sendInputEvent targets the currently focused renderer/frame. On the player
+  // screen this lets a physical controller drive the focused VidKing iframe
+  // using the same keyboard controls a TV player normally exposes.
+  try {
+    mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: key });
+    mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: key });
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => callback({ requestHeaders: details.requestHeaders }));
